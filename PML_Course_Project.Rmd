@@ -1,0 +1,116 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Pat Hallam-Mark"
+date: "September 24, 2016"
+output: html_document
+---
+
+## Overview
+
+The "Weight Lifting Exercise Dataset" data includes measurements from accelerometers positioned on the belt, forearm, arm, and dumbell of 6 participants who were perfoming biceps curls using a dumbell. They were asked to perform the barbell lifts correctly and incorrectly in 5 different ways.  
+
+The goal of the exercise is to predict the manner in which they did the exercise. This corresponds to the the "classe" variable in the training dataset.
+
+## The Data
+
+The Dataset can be found here:
+Training Data: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv  
+Test Data: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+## Load and Explore the Data
+
+there are a lot of #DIV/0 and null values in the data that the training functions may not handle, so convert them to 'NA' values while reading them in.
+```{r loadData}
+setwd("C:/Users/Toshiba/Documents/PracticalMachineLearning")
+trainingDF <- read.csv("pml-training.csv", na.strings=c('#DIV/0', '', 'NA'))
+testing <- read.csv("pml-testing.csv")
+str(trainingDF, list.len=15)
+```
+
+There are a lot of columns (160) and the first 7 columns of the data don't appear to be relevent to activity, so drop them.
+```{r dropCols1}
+trainingDF <- trainingDF[,8:160]
+```
+
+Based on inspection, there are a lot of NA values. Some Machine Learning functions won't handle these well, so lets investigate a bit further by counting the NAs in each column.
+```{r investigateNAs, results='hide'}
+z <- 0
+for (i in 1:ncol(trainingDF)){
+  x <- sum(is.na(trainingDF[,i]))
+  y <- x/nrow(trainingDF) * 100
+  if(y == 0){z <- z + 1}
+  cat(i)
+  cat(" ")
+  cat(y)
+  cat(" ")
+  cat(z, sep='\n')
+  }
+```
+
+100 of the 153 variables have > 97% NA values. These will be of little value to the model, so drop them.
+```{r dropCols2}
+trainingDF <- trainingDF[, colMeans(is.na(trainingDF)) <= .90]
+```
+
+Now we are down to 53 variables.
+
+## Further Investigation of the Data
+
+An attempt was made to further investigate the nature of the data using feature plots with various combinations of the predictors. However, due to the number of predictors, the number of possible comparisons is very large. One aspect of the data that was apparent, however, is the categorical nature of the data.
+
+## Cross Validation
+
+The testing data set only has 20 observations - pretty small, so let's prepare for cross-validation by breaking the training data set up into training + validation sets and leave test set for final assessment. Setting a seed value first so result will be reproducible.
+```{r crossValidation, warning=FALSE, message=FALSE}
+library(caret)
+library(randomForest)
+set.seed(111)
+inTrain <- createDataPartition(y=trainingDF$classe, p=0.7, list=FALSE)
+training <- trainingDF[inTrain,]
+validation <- trainingDF[-inTrain,]
+```
+
+## Build and Evaluate the Model
+
+Based on the categorical nature of the data, it was decided to try random forest methods first.  
+The R Caret package was used and a few different variation of random forest were tried, including  Random Forest and Recursive Partitioning (both with and without reduction of correlated predictors). Random forest produced the most accurate result. A first attempt was made with the default parameters, however after running for more than 30 minutes, it hadn't yet returned a result. This is not suprising, given the number of predictors and observations in the data set and the fact that the default number of trees built is 500. The same method was then attempted again with a smaller number of trees (first 5 and then 10).  
+For details of the other methods evaluated, please see the appendix.  
+
+##Build the Model
+
+```{r modelCreation, cache=TRUE, warning=FALSE, message=FALSE}
+modelFit_RF10 <- train(classe ~ ., method="rf", ntree=10, data=training)
+modelFit_RF10
+```
+##Use The Model To Predict An Outcome for The Validation Dataset
+
+```{r prediction, warning=FALSE, message=FALSE}
+prediction_RF10_VAL <- predict(modelFit_RF10, newdata=validation)
+confusionMatrix(prediction_RF10_VAL, validation$classe)
+```
+##Conclusion
+
+Based on the categorical nature of the, accuracy was selected as the measure of error for the model. The standard random forest method with 10 trees was deemed to be the best balance between execution time (approximately 4 minutes) and accuracy. The level of accuracy achieved on the training dataset was 98.2% and the level of accuracy achieved on the validation dataset was 98.6.  
+
+##Appendix
+
+### Recursive Partitioning
+
+modelFit_RPART <- train(classe ~ ., method="rpart", data=training)  
+modelFit_RPART # 51% Accuracy on training set  
+prediction_RPART <- predict(modelFit_RPART, newdata=validation)  
+confusionMatrix(prediction_RPART, validation$classe) # 49% Accuracy on validation  
+
+### Remove Redundant Features - might help, since there are a large number of predictors
+library(mlbench)  
+correlationMatrix <- cor(training[,1:52]) # create a correlation matrix for training  
+# find attributes that are highly correlated  
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.7)  
+training <- training[,-c(highlyCorrelated)]  
+# drop the highly correlated predictors from training. Now down to 33 predictors  
+# fit the model using recursive partitioning  
+modelFit_LessCor <- train(classe ~ ., method="rpart", data=training)  
+modelFit_LessCor # accuracy is only 50% on training set  
+prediction_LessCor <- predict(modelFit_LessCor, newdata=validation)  
+confusionMatrix(prediction_LessCor, validation$classe) # accuracy is only 44% on validation  
+
